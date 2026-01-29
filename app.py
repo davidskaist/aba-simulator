@@ -17,7 +17,8 @@ st.markdown("""
 
 st.title("📊 ABA 5-Year Executive Board Model")
 
-# --- PERSISTENT DATA LOGIC ---
+# --- PERSISTENT DATA LOGIC (STRENGHTENED) ---
+# We use a key 'hiring_table' to ensure the data editor syncs properly
 if 'manual_hires' not in st.session_state:
     st.session_state.manual_hires = pd.DataFrame([
         {"Month": 1, "Role": "Clinical Director", "Salary": 140000, "Count": 1},
@@ -50,17 +51,19 @@ def run_board_model(hiring_data):
     data = []
     cumulative_ebitda = 0
     
-    # Defensive Logic: Clean the data before math
+    # Defensive Logic: Convert to numeric and fill blanks
     clean_hires = hiring_data.copy()
     for col in ['Count', 'Salary', 'Month']:
-        clean_hires[col] = pd.to_numeric(clean_hires[col], errors='coerce').fillna(0)
+        if col in clean_hires.columns:
+            clean_hires[col] = pd.to_numeric(clean_hires[col], errors='coerce').fillna(0)
+    if 'Role' in clean_hires.columns:
+        clean_hires['Role'] = clean_hires['Role'].fillna("New Role")
 
     for m in range(1, months + 1):
         cases = int(start_cases + (growth_mo * (m-1)))
         
-        # Unit calculations (Weekly hours * 4.33 weeks * 4 units/hr)
+        # Unit calculations
         h_97153, h_97155, h_97151 = cases * 14 * 4.33, cases * 2 * 4.33, cases * (8/6)
-        
         rev_97153, rev_97155, rev_97151 = h_97153 * 4 * r_97153, h_97155 * 4 * r_97155, h_97151 * 4 * r_97151
         total_rev = rev_97153 + rev_97155 + rev_97151
         
@@ -84,19 +87,21 @@ def run_board_model(hiring_data):
         })
     return pd.DataFrame(data)
 
-# Process Data
-df = run_board_model(st.session_state.manual_hires)
-
 # --- TABS ---
 tab1, tab2 = st.tabs(["🏛️ Executive P&L Board", "📋 Editable Hiring Roadmap"])
 
 with tab2:
     st.subheader("Personnel & Hiring Triggers")
-    st.info("💡 Add rows below. Note: Changes persist until the browser is refreshed.")
-    st.session_state.manual_hires = st.data_editor(st.session_state.manual_hires, num_rows="dynamic")
+    st.info("💡 Add roles. Click outside the cell to save. These stay active during your session.")
+    # The 'key' ensures Streamlit tracks changes to this specific widget accurately
+    updated_data = st.data_editor(st.session_state.manual_hires, num_rows="dynamic", key="hiring_table")
+    st.session_state.manual_hires = updated_data
+
+# Run model based on potentially updated data
+df = run_board_model(st.session_state.manual_hires)
 
 with tab1:
-    # 1. MILESTONES
+    # 1. TOP HEADERS
     m1, m2, m3, m4 = st.columns(4)
     def find_m(target):
         match = df[df['Cumulative'] >= target]
@@ -137,39 +142,40 @@ with tab1:
     st.subheader("🔍 Deep Dive Audit Trail")
     periods = board_df['Period'].tolist()
     if periods:
-        drill_period = st.selectbox("Select a period to audit:", periods)
+        drill_period = st.selectbox("Select a column to audit:", periods)
         audit = board_df[board_df['Period'] == drill_period].iloc[0]
         
         a1, a2, a3 = st.columns(3)
         with a1:
-            st.markdown("<div class='audit-card'><b>💰 Revenue Breakdown</b><br>", unsafe_allow_html=True)
-            st.write(f"97153 (Direct): ${audit['R_97153']:,.0f} ({int(audit['H_97153']):,} hrs)")
-            st.write(f"97155 (Super): ${audit['R_97155']:,.0f} ({int(audit['H_97155']):,} hrs)")
-            st.write(f"97151 (Assess): ${audit['R_97151']:,.0f} ({int(audit['H_97151']):,} hrs)")
+            st.markdown("<div class='audit-card'><b>💰 Revenue Receipt</b><br>", unsafe_allow_html=True)
+            st.write(f"Direct (97153): ${audit['R_97153']:,.0f} ({int(audit['H_97153']):,} hrs)")
+            st.write(f"Super (97155): ${audit['R_97155']:,.0f} ({int(audit['H_97155']):,} hrs)")
+            st.write(f"Assess (97151): ${audit['R_97151']:,.0f} ({int(audit['H_97151']):,} hrs)")
             st.markdown("</div>", unsafe_allow_html=True)
         with a2:
             st.markdown("<div class='audit-card'><b>💸 Variable Labor (COGS)</b><br>", unsafe_allow_html=True)
-            st.write(f"RBT Payroll: ${audit['C_RBT']:,.0f}")
+            st.write(f"RBT Cost: ${audit['C_RBT']:,.0f}")
             st.write(f"BCBA Billable: ${audit['C_BCBA']:,.0f}")
             st.markdown("</div>", unsafe_allow_html=True)
         with a3:
             st.markdown("<div class='audit-card'><b>🏛️ Fixed Labor Personnel</b><br>", unsafe_allow_html=True)
             if view_type == "Monthly":
-                month_val = int(drill_period.split(" ")[1])
-                staff_info = df[df['Month'] == month_val].iloc[0]['Staff_Snap']
-                for s in staff_info:
-                    if s.get('Count', 0) > 0:
-                        st.write(f"- {s.get('Role')}: ${s.get('Salary',0)/12*fringe:,.0f}/mo")
+                try:
+                    month_val = int(drill_period.split(" ")[1])
+                    staff_info = df[df['Month'] == month_val].iloc[0]['Staff_Snap']
+                    for s in staff_info:
+                        if s.get('Count', 0) > 0:
+                            st.write(f"- {s.get('Role')}: ${s.get('Salary',0)/12*fringe:,.0f}/mo")
+                except:
+                    st.write("Staff data processing...")
             else:
                 st.write(f"Total Period Fixed Labor: ${audit['Fixed Labor']:,.0f}")
-                st.write("*(Switch to Monthly view for individual roles)*")
+                st.write("*(Monthly view audits individual roles)*")
             st.markdown("</div>", unsafe_allow_html=True)
-    else:
-        st.warning("Adjust sliders to generate period data.")
 
     # Excel Download
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Monthly_Detailed')
+        df.to_excel(writer, index=False, sheet_name='Raw_Data')
         board_df.to_excel(writer, index=False, sheet_name='Executive_Summary')
-    st.download_button("📥 Download Board Financials", output.getvalue(), "ABA_Executive_Proforma.xlsx")
+    st.download_button("📥 Download Final Board Package", output.getvalue(), "ABA_Final_Package.xlsx")
