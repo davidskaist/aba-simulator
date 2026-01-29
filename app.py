@@ -45,11 +45,4 @@ with st.sidebar:
 
     st.header("💰 Global Economics")
     r_97153 = st.number_input("RBT Direct (97153) /unit", value=17.0)
-    pay_rbt = st.number_input("RBT Hourly Pay", value=25.0)
-    fringe = (st.slider("Fringe Benefits %", 10, 35, 20) / 100) + 1
-    
-    st.header("⚙️ View Settings")
-    view_type = st.radio("Display Granularity:", ["Yearly", "Quarterly", "Monthly"])
-
-# --- DIVISIONAL CALCULATOR ---
-def run_model(hiring_data, ih_h_in
+    pay_rbt = st.number_input("RBT Hourly Pay
