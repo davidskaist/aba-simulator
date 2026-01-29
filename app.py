@@ -17,7 +17,7 @@ st.markdown("""
 
 st.title("📊 ABA 5-Year Executive Board Model")
 
-# --- PERSISTENT DATA LOGIC (STRENGHTENED) ---
+# --- PERSISTENT DATA LOGIC ---
 if 'manual_hires' not in st.session_state:
     st.session_state.manual_hires = pd.DataFrame([
         {"Month": 1, "Role": "Clinical Director", "Salary": 140000, "Count": 1},
@@ -41,9 +41,13 @@ with st.sidebar:
     start_cases = st.number_input("Starting Case Load", value=40)
     growth_mo = st.slider("Monthly Net Growth", 0, 20, 5)
     
-    # HEADCOUNT TRACKER (Year 5 Total)
+    st.header("🏥 Clinical Intensity")
+    ih_hours = st.slider("Avg In-Home Hours/Week", 5, 40, 14)
+    cl_hours = st.slider("Avg Clinic Hours/Week", 5, 45, 30)
+
+    # --- NEW: HEADCOUNT TRACKER ---
     st.header("👥 Team Summary")
-    # We pre-calculate headcount for the sidebar
+    # Pre-clean for sidebar metric
     temp_hiring = st.session_state.manual_hires.copy()
     for col in ['Count', 'Salary', 'Month']:
         temp_hiring[col] = pd.to_numeric(temp_hiring[col], errors='coerce').fillna(0)
@@ -54,7 +58,7 @@ with st.sidebar:
     view_type = st.radio("Select P&L Granularity:", ["Monthly", "Quarterly", "Yearly"], horizontal=True)
 
 # --- THE CALCULATOR ---
-def run_board_model(hiring_data):
+def run_board_model(hiring_data, ih_h, cl_h):
     months = 60
     data = []
     cumulative_ebitda = 0
@@ -67,10 +71,20 @@ def run_board_model(hiring_data):
     for m in range(1, months + 1):
         cases = int(start_cases + (growth_mo * (m-1)))
         
-        # Unit calculations (Weekly hours * 4.33 weeks * 4 units/hr)
-        h_97153, h_97155, h_97151 = cases * 14 * 4.33, cases * 2 * 4.33, cases * (8/6)
+        # Blended Unit calculations (60% In-Home / 40% Clinic)
+        ih_cases = cases * 0.6
+        cl_cases = cases * 0.4
         
-        rev_97153, rev_97155, rev_97151 = h_97153 * 4 * r_97153, h_97155 * 4 * r_97155, h_97151 * 4 * r_97151
+        # Monthly Direct Hours (Weekly * 4.33 weeks/mo)
+        h_97153 = ((ih_cases * ih_h) + (cl_cases * cl_h)) * 4.33
+        
+        # Supervision and Assessment remain case-based
+        h_97155 = cases * 2 * 4.33
+        h_97151 = cases * (8/6)
+        
+        rev_97153 = h_97153 * 4 * r_97153
+        rev_97155 = h_97155 * 4 * r_97155
+        rev_97151 = h_97151 * 4 * r_97151
         total_rev = rev_97153 + rev_97155 + rev_97151
         
         c_rbt = (h_97153 * pay_rbt * fringe)
@@ -93,17 +107,17 @@ def run_board_model(hiring_data):
         })
     return pd.DataFrame(data)
 
+# Process Data
+df = run_board_model(st.session_state.manual_hires, ih_hours, cl_hours)
+
 # --- TABS ---
 tab1, tab2 = st.tabs(["🏛️ Executive P&L Board", "📋 Editable Hiring Roadmap"])
 
 with tab2:
     st.subheader("Personnel & Hiring Triggers")
-    st.info("💡 Edit roles. **Important:** Click outside the table after typing to ensure all columns (Month, Count, etc.) save.")
-    # THE FIX: We use a key and update session state directly from the editor
-    st.session_state.manual_hires = st.data_editor(st.session_state.manual_hires, num_rows="dynamic", key="hiring_editor_v2")
-
-# Run model based on the "Live" session state table
-df = run_board_model(st.session_state.manual_hires)
+    st.info("💡 Edit roles. Note: To ensure 'Month' and 'Count' stick, click outside the table after typing.")
+    # Renaming Key to force reset and better binding
+    st.session_state.manual_hires = st.data_editor(st.session_state.manual_hires, num_rows="dynamic", key="hiring_v3")
 
 with tab1:
     # 1. MILESTONES
@@ -147,7 +161,7 @@ with tab1:
     st.subheader("🔍 Deep Dive Audit Trail")
     periods = board_df['Period'].tolist()
     if periods:
-        drill_period = st.selectbox("Select a column to audit:", periods)
+        drill_period = st.selectbox("Select a period to audit:", periods)
         audit = board_df[board_df['Period'] == drill_period].iloc[0]
         
         a1, a2, a3 = st.columns(3)
@@ -159,8 +173,9 @@ with tab1:
             st.markdown("</div>", unsafe_allow_html=True)
         with a2:
             st.markdown("<div class='audit-card'><b>💸 Variable Labor (COGS)</b><br>", unsafe_allow_html=True)
-            st.write(f"RBT Cost: ${audit['C_RBT']:,.0f}")
+            st.write(f"RBT Payroll: ${audit['C_RBT']:,.0f}")
             st.write(f"BCBA Billable: ${audit['C_BCBA']:,.0f}")
+            st.write(f"*(Based on {ih_hours}h IH / {cl_hours}h Clinic Avg)*")
             st.markdown("</div>", unsafe_allow_html=True)
         with a3:
             st.markdown("<div class='audit-card'><b>🏛️ Fixed Labor Personnel</b><br>", unsafe_allow_html=True)
@@ -177,6 +192,6 @@ with tab1:
     # Excel Download
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Detailed_Data')
-        board_df.to_excel(writer, index=False, sheet_name='Executive_P&L')
-    st.download_button("📥 Download Final Board Package", output.getvalue(), "ABA_Final_Package.xlsx")
+        df.to_excel(writer, index=False, sheet_name='Monthly_Detailed')
+        board_df.to_excel(writer, index=False, sheet_name='Executive_Summary')
+    st.download_button("📥 Download Board Financials", output.getvalue(), "ABA_Executive_Proforma.xlsx")
