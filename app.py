@@ -78,4 +78,58 @@ def run_model(hiring_data):
             if "Clinic" in row['Role']:
                 cl_fixed += cost
             else:
-                ih
+                ih_fixed += cost
+        
+        ih_ebitda = ih_rev - ih_cogs - ih_fixed - (ih_rev * 0.05)
+        
+        # 3. CLINIC DIVISION MATH
+        cl_rev = 0
+        cl_cogs = 0
+        cl_ebitda = 0
+        if m >= 13:
+            cl_rev = (cl_cases * cl_h * 4.33 * 4 * r_97153) + (cl_cases * 1400) # Higher intensity super
+            cl_cogs = (cl_cases * cl_h * 4.33 * 25 * fringe) + (cl_cases * 350 * fringe)
+            cl_ebitda = cl_rev - cl_cogs - cl_fixed - cl_rent - (cl_rev * 0.05)
+
+        data.append({
+            "Month": m, "Year": int(np.ceil(m/12)), "Quarter": int(np.ceil(((m-1) % 12 + 1)/3)),
+            "IH_Cases": ih_cases, "IH_Revenue": ih_rev, "IH_EBITDA": ih_ebitda,
+            "CL_Cases": cl_cases, "CL_Revenue": cl_rev, "CL_EBITDA": cl_ebitda
+        })
+    return pd.DataFrame(data)
+
+df = run_model(st.session_state.manual_hires)
+
+# --- TABS ---
+tab1, tab2, tab3 = st.tabs(["🏠 In-Home P&L", "🏢 Clinic P&L", "📋 Personnel Manager"])
+
+with tab3:
+    st.subheader("Division-Specific Personnel")
+    with st.form("hiring_shield"):
+        edited = st.data_editor(st.session_state.manual_hires, num_rows="dynamic", use_container_width=True)
+        if st.form_submit_button("🚀 Update Divisions"):
+            st.session_state.manual_hires = edited
+            st.rerun()
+
+def get_board_view(df, prefix):
+    group_cols = ["Year"]
+    if view_type == "Quarterly": group_cols.append("Quarter")
+    
+    board = df.groupby(group_cols).agg({
+        f'{prefix}_Cases': 'max', f'{prefix}_Revenue': 'sum', f'{prefix}_EBITDA': 'sum'
+    }).reset_index()
+    
+    if view_type == "Yearly": board['Period'] = board.apply(lambda x: f"Year {int(x['Year'])}", axis=1)
+    else: board['Period'] = board.apply(lambda x: f"Year {int(x['Year'])} Q{int(x['Quarter'])}", axis=1)
+    
+    # Add Margin
+    board['Margin %'] = (board[f'{prefix}_EBITDA'] / board[f'{prefix}_Revenue'] * 100).fillna(0)
+    return board[['Period', f'{prefix}_Cases', f'{prefix}_Revenue', f'{prefix}_EBITDA', 'Margin %']].set_index('Period').T
+
+with tab1:
+    st.markdown("<div class='division-header'><h3>In-Home Division Financials</h3></div>", unsafe_allow_html=True)
+    st.dataframe(get_board_view(df, "IH").style.format(precision=0, thousands=","), use_container_width=True)
+
+with tab2:
+    st.markdown("<div class='division-header'><h3>Clinic Division Financials (Launches Y2)</h3></div>", unsafe_allow_html=True)
+    st.dataframe(get_board_view(df, "CL").style.format(precision=0, thousands=","), use_container_width=True)
