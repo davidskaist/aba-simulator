@@ -129,4 +129,47 @@ with tab1:
     # 3. MAIN TABLE
     st.subheader(f"Projected P&L Summary")
     display_df = board_df[['Period', 'Cases', 'Revenue', 'COGS', 'Fixed Labor', 'OpEx', 'EBITDA']].set_index('Period').T
-    st.
+    st.dataframe(display_df.style.format(precision=0, thousands=","), use_container_width=True)
+    
+    st.markdown("---")
+    
+    # 4. DEEP DIVE
+    st.subheader("🔍 Deep Dive Audit Trail")
+    periods = board_df['Period'].tolist()
+    if periods:
+        drill_period = st.selectbox("Select a period to audit:", periods)
+        audit = board_df[board_df['Period'] == drill_period].iloc[0]
+        
+        a1, a2, a3 = st.columns(3)
+        with a1:
+            st.markdown("<div class='audit-card'><b>💰 Revenue Breakdown</b><br>", unsafe_allow_html=True)
+            st.write(f"97153 (Direct): ${audit['R_97153']:,.0f} ({int(audit['H_97153']):,} hrs)")
+            st.write(f"97155 (Super): ${audit['R_97155']:,.0f} ({int(audit['H_97155']):,} hrs)")
+            st.write(f"97151 (Assess): ${audit['R_97151']:,.0f} ({int(audit['H_97151']):,} hrs)")
+            st.markdown("</div>", unsafe_allow_html=True)
+        with a2:
+            st.markdown("<div class='audit-card'><b>💸 Variable Labor (COGS)</b><br>", unsafe_allow_html=True)
+            st.write(f"RBT Payroll: ${audit['C_RBT']:,.0f}")
+            st.write(f"BCBA Billable: ${audit['C_BCBA']:,.0f}")
+            st.markdown("</div>", unsafe_allow_html=True)
+        with a3:
+            st.markdown("<div class='audit-card'><b>🏛️ Fixed Labor Personnel</b><br>", unsafe_allow_html=True)
+            if view_type == "Monthly":
+                month_val = int(drill_period.split(" ")[1])
+                staff_info = df[df['Month'] == month_val].iloc[0]['Staff_Snap']
+                for s in staff_info:
+                    if s.get('Count', 0) > 0:
+                        st.write(f"- {s.get('Role')}: ${s.get('Salary',0)/12*fringe:,.0f}/mo")
+            else:
+                st.write(f"Total Period Fixed Labor: ${audit['Fixed Labor']:,.0f}")
+                st.write("*(Switch to Monthly view for individual roles)*")
+            st.markdown("</div>", unsafe_allow_html=True)
+    else:
+        st.warning("Adjust sliders to generate period data.")
+
+    # Excel Download
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Monthly_Detailed')
+        board_df.to_excel(writer, index=False, sheet_name='Executive_Summary')
+    st.download_button("📥 Download Board Financials", output.getvalue(), "ABA_Executive_Proforma.xlsx")
