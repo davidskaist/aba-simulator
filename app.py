@@ -50,6 +50,12 @@ def run_board_model(hiring_data):
     data = []
     cumulative_ebitda = 0
     
+    # CRASH PROTECTION: Fill empty cells in the hiring table with 0
+    clean_hires = hiring_data.copy()
+    clean_hires['Count'] = pd.to_numeric(clean_hires['Count']).fillna(0)
+    clean_hires['Salary'] = pd.to_numeric(clean_hires['Salary']).fillna(0)
+    clean_hires['Month'] = pd.to_numeric(clean_hires['Month']).fillna(1)
+
     for m in range(1, months + 1):
         cases = int(start_cases + (growth_mo * (m-1)))
         
@@ -66,7 +72,7 @@ def run_board_model(hiring_data):
         c_rbt = (h_97153 * pay_rbt * fringe)
         c_bcba = ((h_97155 + h_97151) * pay_bcba_billable * fringe)
         
-        active_hires = hiring_data[hiring_data['Month'] <= m].copy()
+        active_hires = clean_hires[clean_hires['Month'] <= m].copy()
         fixed_labor_mo = (active_hires['Salary'] * active_hires['Count']).sum() / 12 * fringe
         
         op_ex = 5000 + (total_rev * 0.06) + (int(np.ceil(m/12)) * 3000)
@@ -157,21 +163,20 @@ with tab1:
         st.markdown("<div class='audit-card'><b>💸 Variable Labor (COGS)</b><br>", unsafe_allow_html=True)
         st.write(f"RBT Cost: ${audit['C_RBT']:,.0f}")
         st.write(f"BCBA Billable: ${audit['C_BCBA']:,.0f}")
-        st.write(f"*(At {pay_rbt}/hr RBT & {pay_bcba_billable}/hr BCBA)*")
         st.markdown("</div>", unsafe_allow_html=True)
 
     with a3:
         st.markdown("<div class='audit-card'><b>🏛️ Fixed Labor Audit</b><br>", unsafe_allow_html=True)
         if view_type == "Monthly":
-            # For monthly, we can show specific names/roles from the actual list
             month_idx = int(drill_period.split(" ")[1])
             staff_data = df[df['Month'] == month_idx].iloc[0]['Staff_List']
             for s in staff_data:
-                if s['Count'] > 0:
-                    st.write(f"- {s['Role']} (x{s['Count']}): ${s['Salary']/12*fringe:,.0f}/mo")
+                # Use .get() or check key to ensure stability
+                count = s.get('Count', 0)
+                if count and count > 0:
+                    st.write(f"- {s.get('Role', 'New Role')} (x{count}): ${s.get('Salary', 0)/12*fringe:,.0f}/mo")
         else:
             st.write(f"Total Period Fixed Labor: ${audit['Fixed Labor']:,.0f}")
-            st.write("*(Switch to Monthly view for individual staff breakdowns)*")
         st.markdown("</div>", unsafe_allow_html=True)
 
     # Excel Download
