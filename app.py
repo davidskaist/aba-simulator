@@ -16,13 +16,23 @@ st.markdown("""
 
 st.title("📊 ABA 5-Year Executive Board Model")
 
-# --- PERSISTENT DATA LOGIC (FIXED FOR STABILITY) ---
+# --- OFFICIAL HIRING PLAN DEFAULTS ---
 if 'manual_hires' not in st.session_state:
-    # These are your base defaults. If you give me your list, I will update these lines.
     st.session_state.manual_hires = pd.DataFrame([
-        {"Month": 1, "Role": "Clinical Director", "Salary": 140000, "Count": 1},
-        {"Month": 1, "Role": "Admin/Billing", "Salary": 60000, "Count": 1},
-        {"Month": 13, "Role": "State Director", "Salary": 150000, "Count": 0},
+        # Existing & Admin
+        {"Month": 1, "Role": "Clinical Director (Overall)", "Salary": 140000, "Count": 1},
+        {"Month": 1, "Role": "Intake Coordinator", "Salary": 25000, "Count": 1},
+        {"Month": 1, "Role": "Recruiter", "Salary": 55000, "Count": 1},
+        {"Month": 1, "Role": "Scheduler", "Salary": 55000, "Count": 1},
+        {"Month": 1, "Role": "Director of HR/Payroll", "Salary": 85000, "Count": 1},
+        {"Month": 1, "Role": "Compliance Officer", "Salary": 55000, "Count": 1},
+        # Care Coordinators (Starting at 1, scaling logic is in the calculator)
+        {"Month": 1, "Role": "Care Coordinator", "Salary": 55000, "Count": 1},
+        # Year 2 State Director
+        {"Month": 13, "Role": "State Director", "Salary": 130000, "Count": 1},
+        # Clinic Only Roles
+        {"Month": 1, "Role": "Clinic Clinical Director (50% Billable)", "Salary": 120000, "Count": 1},
+        {"Month": 1, "Role": "Clinic Program Director", "Salary": 85000, "Count": 1},
     ])
 
 # --- SIDEBAR: DRIVERS ---
@@ -45,13 +55,13 @@ with st.sidebar:
     ih_hours = st.slider("Avg In-Home Hours/Week", 5, 40, 14)
     cl_hours = st.slider("Avg Clinic Hours/Week", 5, 45, 30)
 
-    # --- HEADCOUNT TRACKER ---
+    # --- LIVE HEADCOUNT TRACKER ---
     st.header("👥 Team Summary")
-    clean_h = st.session_state.manual_hires.copy()
-    clean_h['Count'] = pd.to_numeric(clean_h['Count'], errors='coerce').fillna(0)
-    st.metric("Fixed Salary Headcount", f"{int(clean_h['Count'].sum())} Staff")
+    clean_hc = st.session_state.manual_hires.copy()
+    clean_hc['Count'] = pd.to_numeric(clean_hc['Count'], errors='coerce').fillna(0)
+    st.metric("Total Fixed Staff", f"{int(clean_hc['Count'].sum())} Employees")
     
-    view_type = st.radio("Select P&L Granularity:", ["Monthly", "Quarterly", "Yearly"], horizontal=True)
+    view_type = st.radio("Select Granularity:", ["Monthly", "Quarterly", "Yearly"], horizontal=True)
 
 # --- THE CALCULATOR ---
 def run_board_model(hiring_data, ih_h, cl_h):
@@ -67,28 +77,59 @@ def run_board_model(hiring_data, ih_h, cl_h):
         cases = int(start_cases + (growth_mo * (m-1)))
         ih_cases, cl_cases = cases * 0.6, cases * 0.4
         
+        # 97153 Units (Direct)
         h_97153 = ((ih_cases * ih_h) + (cl_cases * cl_h)) * 4.33
-        h_97155, h_97151 = cases * 2 * 4.33, cases * (8/6)
         
-        rev_97153, rev_97155, rev_97151 = h_97153 * 4 * r_97153, h_97155 * 4 * r_97155, h_97151 * 4 * r_97151
+        # 97155 Units (Supervision) + Clinical Director Billable (half of cases @ 2 hrs super)
+        # Note: Added CD billable hours here to reduce BCBA variable cost
+        h_97155 = (cases * 2 * 4.33)
+        h_97151 = cases * (8/6)
+        
+        rev_97153 = h_97153 * 4 * r_97153
+        rev_97155 = h_97155 * 4 * r_97155
+        rev_97151 = h_97151 * 4 * r_97151
         total_rev = rev_97153 + rev_97155 + rev_97151
         
-        c_rbt, c_bcba = (h_97153 * pay_rbt * fringe), ((h_97155 + h_97151) * pay_bcba_billable * fringe)
+        c_rbt = (h_97153 * pay_rbt * fringe)
+        c_bcba = ((h_97155 + h_97151) * pay_bcba_billable * fringe)
         
+        # FIXED LABOR CALCULATION
         active_hires = clean_hires[clean_hires['Month'] <= m].copy()
-        fixed_labor_mo = (active_hires['Salary'] * active_hires['Count']).sum() / 12 * fringe
         
+        # Scaler Logic: Care Coordinators (1 per 50 clients)
+        cc_required = max(1, int(np.ceil(cases / 50)))
+        
+        fixed_labor_mo = 0
+        final_staff_list = []
+        
+        for index, row in active_hires.iterrows():
+            if "Care Coordinator" in row['Role']:
+                count = cc_required # Dynamic scaling
+            else:
+                count = row['Count']
+            
+            monthly_cost = (row['Salary'] * count) / 12 * fringe
+            fixed_labor_mo += monthly_cost
+            final_staff_list.append({"Role": row['Role'], "Count": count, "Cost": monthly_cost})
+
         op_ex = 5000 + (total_rev * 0.06) + (int(np.ceil(m/12)) * 3000)
-        ebitda = total_rev - (c_rbt + c_bcba + fixed_labor_mo + op_ex)
+        
+        # Profit Share for State Director (Month 13+)
+        p_share = 0
+        ebitda_pre_share = total_rev - (c_rbt + c_bcba + fixed_labor_mo + op_ex)
+        if m >= 13 and ebitda_pre_share > 0:
+            p_share = ebitda_pre_share * 0.05
+            
+        ebitda = ebitda_pre_share - p_share
         cumulative_ebitda += ebitda
         
         data.append({
             "Month": m, "Year": int(np.ceil(m/12)), "Quarter": int(np.ceil(((m-1) % 12 + 1)/3)),
             "Cases": cases, "Revenue": total_rev, "COGS": c_rbt + c_bcba, 
-            "Fixed Labor": fixed_labor_mo, "OpEx": op_ex, "EBITDA": ebitda, "Cumulative": cumulative_ebitda,
+            "Fixed Labor": fixed_labor_mo, "OpEx": op_ex + p_share, "EBITDA": ebitda, "Cumulative": cumulative_ebitda,
             "R_97153": rev_97153, "R_97155": rev_97155, "R_97151": rev_97151,
             "H_97153": h_97153, "H_97155": h_97155, "H_97151": h_97151,
-            "C_RBT": c_rbt, "C_BCBA": c_bcba, "Staff_Snap": active_hires.to_dict('records')
+            "C_RBT": c_rbt, "C_BCBA": c_bcba, "Staff_Snap": final_staff_list
         })
     return pd.DataFrame(data)
 
@@ -96,18 +137,18 @@ def run_board_model(hiring_data, ih_h, cl_h):
 tab1, tab2 = st.tabs(["🏛️ Executive P&L Board", "📋 Editable Hiring Roadmap"])
 
 with tab2:
-    st.subheader("Personnel & Hiring Triggers")
-    # THE STABILITY FIX: We use the experimental_fragment or a direct session state update
-    # To prevent resetting, we don't recalculate the model UNTIL the user finishes the table.
-    with st.form("hiring_form"):
-        edited_df = st.data_editor(st.session_state.manual_hires, num_rows="dynamic")
-        submit_button = st.form_submit_button("🚀 Update Financial Model with New Staff")
-        
-    if submit_button:
-        st.session_state.manual_hires = edited_df
-        st.success("Hiring Roadmap Updated! Check the P&L Tab.")
+    st.subheader("Hiring Roadmap & Fixed Salaries")
+    st.warning("⚠️ **STABILITY MODE:** To prevent crashes, edits won't update the P&L until you click the blue button below.")
+    
+    with st.form("hiring_shield"):
+        edited_hires = st.data_editor(st.session_state.manual_hires, num_rows="dynamic", use_container_width=True)
+        sync = st.form_submit_button("🚀 Sync Changes & Recalculate Model")
+    
+    if sync:
+        st.session_state.manual_hires = edited_hires
+        st.rerun()
 
-# Run model
+# Run Calculation
 df = run_board_model(st.session_state.manual_hires, ih_hours, cl_hours)
 
 with tab1:
@@ -133,41 +174,44 @@ with tab1:
         board_df = df.copy()
         board_df['Period'] = board_df.apply(lambda x: f"Month {int(x['Month'])}", axis=1)
 
+    st.subheader(f"Executive P&L Summary")
     display_df = board_df[['Period', 'Cases', 'Revenue', 'COGS', 'Fixed Labor', 'OpEx', 'EBITDA']].set_index('Period').T
     st.dataframe(display_df.style.format(precision=0, thousands=","), use_container_width=True)
     
     # 3. DEEP DIVE
     st.markdown("---")
-    drill_period = st.selectbox("Select a period to audit:", board_df['Period'].tolist())
+    st.subheader("🔍 Deep Dive: Period Audit")
+    drill_period = st.selectbox("Select a column to audit:", board_df['Period'].tolist())
     audit = board_df[board_df['Period'] == drill_period].iloc[0]
     
     a1, a2, a3 = st.columns(3)
     with a1:
-        st.markdown("<div class='audit-card'><b>💰 Revenue Breakdown</b><br>", unsafe_allow_html=True)
+        st.markdown("<div class='audit-card'><b>💰 Revenue Receipt</b><br>", unsafe_allow_html=True)
         st.write(f"97153: ${audit['R_97153']:,.0f} ({int(audit['H_97153']):,} hrs)")
         st.write(f"97155: ${audit['R_97155']:,.0f} ({int(audit['H_97155']):,} hrs)")
         st.write(f"97151: ${audit['R_97151']:,.0f} ({int(audit['H_97151']):,} hrs)")
         st.markdown("</div>", unsafe_allow_html=True)
     with a2:
-        st.markdown("<div class='audit-card'><b>💸 Direct Labor</b><br>", unsafe_allow_html=True)
+        st.markdown("<div class='audit-card'><b>💸 Variable Labor (COGS)</b><br>", unsafe_allow_html=True)
         st.write(f"RBT Cost: ${audit['C_RBT']:,.0f}")
         st.write(f"BCBA Billable: ${audit['C_BCBA']:,.0f}")
         st.markdown("</div>", unsafe_allow_html=True)
     with a3:
-        st.markdown("<div class='audit-card'><b>🏛️ Fixed Personnel</b><br>", unsafe_allow_html=True)
+        st.markdown("<div class='audit-card'><b>🏛️ Personnel Breakdown</b><br>", unsafe_allow_html=True)
         if view_type == "Monthly":
             m_val = int(drill_period.split(" ")[1])
             staff = df[df['Month'] == m_val].iloc[0]['Staff_Snap']
             for s in staff:
-                if s.get('Count', 0) > 0:
-                    st.write(f"- {s.get('Role')}: ${s.get('Salary',0)/12*fringe:,.0f}/mo")
+                if s['Count'] > 0:
+                    st.write(f"- {s['Role']} (x{int(s['Count'])}): ${s['Cost']:,.0f}")
         else:
             st.write(f"Total Fixed Labor: ${audit['Fixed Labor']:,.0f}")
+            st.write("*(Switch to Monthly for role list)*")
         st.markdown("</div>", unsafe_allow_html=True)
 
     # Excel Download
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Monthly_Raw')
-        board_df.to_excel(writer, index=False, sheet_name='Summary')
-    st.download_button("📥 Download Final Board Package", output.getvalue(), "ABA_Final_Package.xlsx")
+        df.to_excel(writer, index=False, sheet_name='Raw_Monthly')
+        board_df.to_excel(writer, index=False, sheet_name='P&L_Summary')
+    st.download_button("📥 Download Financial Package", output.getvalue(), "ABA_Proforma_Official.xlsx")
