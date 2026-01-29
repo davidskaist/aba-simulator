@@ -52,39 +52,4 @@ with st.sidebar:
     view_type = st.radio("Display Granularity:", ["Yearly", "Quarterly", "Monthly"])
 
 # --- DIVISIONAL CALCULATOR ---
-def run_model(hiring_data, ih_h_in, cl_h_in):
-    months = 60
-    data = []
-    
-    clean_hires = hiring_data.copy()
-    for col in ['Count', 'Salary', 'Month']:
-        clean_hires[col] = pd.to_numeric(clean_hires[col], errors='coerce').fillna(0)
-
-    for m in range(1, months + 1):
-        ih_cases = ih_start + (ih_growth * (m-1))
-        cl_cases = 0
-        if m >= 13:
-            cl_ramp = min(m - 12, 24)
-            cl_cases = (20 / 24) * cl_ramp
-
-        active_staff = clean_hires[clean_hires['Month'] <= m]
-        cc_required = max(1, int(np.ceil((ih_cases + cl_cases) / 50)))
-        
-        ih_fixed, cl_fixed = 0, 0
-        for _, row in active_staff.iterrows():
-            cnt = cc_required if "Care Coordinator" in row['Role'] else row['Count']
-            cost = (row['Salary'] * cnt) / 12 * fringe
-            if "Clinic" in row['Role']: cl_fixed += cost
-            else: ih_fixed += cost
-        
-        # Revenue/COGS Math
-        h_ih = ih_cases * ih_h_in * 4.33
-        ih_rev = (h_ih * 4 * r_97153) + (ih_cases * 1100)
-        ih_cogs = (h_ih * pay_rbt * fringe) + (ih_cases * 350 * fringe)
-        ih_ebitda = ih_rev - ih_cogs - ih_fixed - (ih_rev * 0.05)
-        
-        cl_rev, cl_cogs, cl_ebitda = 0, 0, 0
-        if m >= 13:
-            h_cl = cl_cases * cl_h_in * 4.33
-            cl_rev = (h_cl * 4 * r_97153) + (cl_cases * 1400)
-            cl_cogs = (h_cl * pay_rbt * fringe) + (cl_cases
+def run_model(hiring_data, ih_h_in
