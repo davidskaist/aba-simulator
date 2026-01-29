@@ -6,7 +6,6 @@ from io import BytesIO
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="ABA Executive Financial Suite", layout="wide")
 
-# Professional Styling
 st.markdown("""
     <style>
     .main { background-color: #ffffff; }
@@ -17,8 +16,9 @@ st.markdown("""
 
 st.title("📊 ABA 5-Year Executive Board Model")
 
-# --- PERSISTENT DATA LOGIC ---
+# --- PERSISTENT DATA LOGIC (FIXED FOR STABILITY) ---
 if 'manual_hires' not in st.session_state:
+    # These are your base defaults. If you give me your list, I will update these lines.
     st.session_state.manual_hires = pd.DataFrame([
         {"Month": 1, "Role": "Clinical Director", "Salary": 140000, "Count": 1},
         {"Month": 1, "Role": "Admin/Billing", "Salary": 60000, "Count": 1},
@@ -45,16 +45,12 @@ with st.sidebar:
     ih_hours = st.slider("Avg In-Home Hours/Week", 5, 40, 14)
     cl_hours = st.slider("Avg Clinic Hours/Week", 5, 45, 30)
 
-    # --- NEW: HEADCOUNT TRACKER ---
+    # --- HEADCOUNT TRACKER ---
     st.header("👥 Team Summary")
-    # Pre-clean for sidebar metric
-    temp_hiring = st.session_state.manual_hires.copy()
-    for col in ['Count', 'Salary', 'Month']:
-        temp_hiring[col] = pd.to_numeric(temp_hiring[col], errors='coerce').fillna(0)
-    total_hc = temp_hiring['Count'].sum()
-    st.metric("Fixed Salary Headcount", f"{int(total_hc)} Staff")
+    clean_h = st.session_state.manual_hires.copy()
+    clean_h['Count'] = pd.to_numeric(clean_h['Count'], errors='coerce').fillna(0)
+    st.metric("Fixed Salary Headcount", f"{int(clean_h['Count'].sum())} Staff")
     
-    st.header("⚙️ View Settings")
     view_type = st.radio("Select P&L Granularity:", ["Monthly", "Quarterly", "Yearly"], horizontal=True)
 
 # --- THE CALCULATOR ---
@@ -63,32 +59,21 @@ def run_board_model(hiring_data, ih_h, cl_h):
     data = []
     cumulative_ebitda = 0
     
-    # Defensive Logic: Clean the data before math
     clean_hires = hiring_data.copy()
     for col in ['Count', 'Salary', 'Month']:
         clean_hires[col] = pd.to_numeric(clean_hires[col], errors='coerce').fillna(0)
 
     for m in range(1, months + 1):
         cases = int(start_cases + (growth_mo * (m-1)))
+        ih_cases, cl_cases = cases * 0.6, cases * 0.4
         
-        # Blended Unit calculations (60% In-Home / 40% Clinic)
-        ih_cases = cases * 0.6
-        cl_cases = cases * 0.4
-        
-        # Monthly Direct Hours (Weekly * 4.33 weeks/mo)
         h_97153 = ((ih_cases * ih_h) + (cl_cases * cl_h)) * 4.33
+        h_97155, h_97151 = cases * 2 * 4.33, cases * (8/6)
         
-        # Supervision and Assessment remain case-based
-        h_97155 = cases * 2 * 4.33
-        h_97151 = cases * (8/6)
-        
-        rev_97153 = h_97153 * 4 * r_97153
-        rev_97155 = h_97155 * 4 * r_97155
-        rev_97151 = h_97151 * 4 * r_97151
+        rev_97153, rev_97155, rev_97151 = h_97153 * 4 * r_97153, h_97155 * 4 * r_97155, h_97151 * 4 * r_97151
         total_rev = rev_97153 + rev_97155 + rev_97151
         
-        c_rbt = (h_97153 * pay_rbt * fringe)
-        c_bcba = ((h_97155 + h_97151) * pay_bcba_billable * fringe)
+        c_rbt, c_bcba = (h_97153 * pay_rbt * fringe), ((h_97155 + h_97151) * pay_bcba_billable * fringe)
         
         active_hires = clean_hires[clean_hires['Month'] <= m].copy()
         fixed_labor_mo = (active_hires['Salary'] * active_hires['Count']).sum() / 12 * fringe
@@ -107,17 +92,23 @@ def run_board_model(hiring_data, ih_h, cl_h):
         })
     return pd.DataFrame(data)
 
-# Process Data
-df = run_board_model(st.session_state.manual_hires, ih_hours, cl_hours)
-
 # --- TABS ---
 tab1, tab2 = st.tabs(["🏛️ Executive P&L Board", "📋 Editable Hiring Roadmap"])
 
 with tab2:
     st.subheader("Personnel & Hiring Triggers")
-    st.info("💡 Edit roles. Note: To ensure 'Month' and 'Count' stick, click outside the table after typing.")
-    # Renaming Key to force reset and better binding
-    st.session_state.manual_hires = st.data_editor(st.session_state.manual_hires, num_rows="dynamic", key="hiring_v3")
+    # THE STABILITY FIX: We use the experimental_fragment or a direct session state update
+    # To prevent resetting, we don't recalculate the model UNTIL the user finishes the table.
+    with st.form("hiring_form"):
+        edited_df = st.data_editor(st.session_state.manual_hires, num_rows="dynamic")
+        submit_button = st.form_submit_button("🚀 Update Financial Model with New Staff")
+        
+    if submit_button:
+        st.session_state.manual_hires = edited_df
+        st.success("Hiring Roadmap Updated! Check the P&L Tab.")
+
+# Run model
+df = run_board_model(st.session_state.manual_hires, ih_hours, cl_hours)
 
 with tab1:
     # 1. MILESTONES
@@ -131,67 +122,52 @@ with tab1:
     m3.metric("🏛️ $2M Cumul. Profit", find_m(2000000))
     m4.metric("💰 Year 5 EBITDA", f"${df.iloc[-12:]['EBITDA'].sum():,.0f}")
 
-    # 2. AGGREGATION
+    # 2. MAIN TABLE
     if view_type == "Quarterly":
-        board_df = df.groupby(["Year", "Quarter"]).agg({
-            'Cases': 'max', 'Revenue': 'sum', 'COGS': 'sum', 'Fixed Labor': 'sum', 'OpEx': 'sum', 'EBITDA': 'sum',
-            'R_97153':'sum', 'R_97155':'sum', 'R_97151':'sum', 'H_97153':'sum', 'H_97155':'sum', 'H_97151':'sum',
-            'C_RBT':'sum', 'C_BCBA':'sum'
-        }).reset_index().sort_values(['Year', 'Quarter'])
+        board_df = df.groupby(["Year", "Quarter"]).agg({'Cases':'max','Revenue':'sum','COGS':'sum','Fixed Labor':'sum','OpEx':'sum','EBITDA':'sum','R_97153':'sum','R_97155':'sum','R_97151':'sum','H_97153':'sum','H_97155':'sum','H_97151':'sum','C_RBT':'sum','C_BCBA':'sum'}).reset_index().sort_values(['Year','Quarter'])
         board_df['Period'] = board_df.apply(lambda x: f"Year {int(x['Year'])} Q{int(x['Quarter'])}", axis=1)
     elif view_type == "Yearly":
-        board_df = df.groupby("Year").agg({
-            'Cases': 'max', 'Revenue': 'sum', 'COGS': 'sum', 'Fixed Labor': 'sum', 'OpEx': 'sum', 'EBITDA': 'sum',
-            'R_97153':'sum', 'R_97155':'sum', 'R_97151':'sum', 'H_97153':'sum', 'H_97155':'sum', 'H_97151':'sum',
-            'C_RBT':'sum', 'C_BCBA':'sum'
-        }).reset_index().sort_values('Year')
+        board_df = df.groupby("Year").agg({'Cases':'max','Revenue':'sum','COGS':'sum','Fixed Labor':'sum','OpEx':'sum','EBITDA':'sum','R_97153':'sum','R_97155':'sum','R_97151':'sum','H_97153':'sum','H_97155':'sum','H_97151':'sum','C_RBT':'sum','C_BCBA':'sum'}).reset_index().sort_values('Year')
         board_df['Period'] = board_df.apply(lambda x: f"Year {int(x['Year'])}", axis=1)
     else:
         board_df = df.copy()
         board_df['Period'] = board_df.apply(lambda x: f"Month {int(x['Month'])}", axis=1)
 
-    # 3. MAIN TABLE
-    st.subheader(f"Projected P&L Summary")
     display_df = board_df[['Period', 'Cases', 'Revenue', 'COGS', 'Fixed Labor', 'OpEx', 'EBITDA']].set_index('Period').T
     st.dataframe(display_df.style.format(precision=0, thousands=","), use_container_width=True)
     
+    # 3. DEEP DIVE
     st.markdown("---")
+    drill_period = st.selectbox("Select a period to audit:", board_df['Period'].tolist())
+    audit = board_df[board_df['Period'] == drill_period].iloc[0]
     
-    # 4. DEEP DIVE
-    st.subheader("🔍 Deep Dive Audit Trail")
-    periods = board_df['Period'].tolist()
-    if periods:
-        drill_period = st.selectbox("Select a period to audit:", periods)
-        audit = board_df[board_df['Period'] == drill_period].iloc[0]
-        
-        a1, a2, a3 = st.columns(3)
-        with a1:
-            st.markdown("<div class='audit-card'><b>💰 Revenue Breakdown</b><br>", unsafe_allow_html=True)
-            st.write(f"97153 (Direct): ${audit['R_97153']:,.0f} ({int(audit['H_97153']):,} hrs)")
-            st.write(f"97155 (Super): ${audit['R_97155']:,.0f} ({int(audit['H_97155']):,} hrs)")
-            st.write(f"97151 (Assess): ${audit['R_97151']:,.0f} ({int(audit['H_97151']):,} hrs)")
-            st.markdown("</div>", unsafe_allow_html=True)
-        with a2:
-            st.markdown("<div class='audit-card'><b>💸 Variable Labor (COGS)</b><br>", unsafe_allow_html=True)
-            st.write(f"RBT Payroll: ${audit['C_RBT']:,.0f}")
-            st.write(f"BCBA Billable: ${audit['C_BCBA']:,.0f}")
-            st.write(f"*(Based on {ih_hours}h IH / {cl_hours}h Clinic Avg)*")
-            st.markdown("</div>", unsafe_allow_html=True)
-        with a3:
-            st.markdown("<div class='audit-card'><b>🏛️ Fixed Labor Personnel</b><br>", unsafe_allow_html=True)
-            if view_type == "Monthly":
-                month_val = int(drill_period.split(" ")[1])
-                staff_info = df[df['Month'] == month_val].iloc[0]['Staff_Snap']
-                for s in staff_info:
-                    if s.get('Count', 0) > 0:
-                        st.write(f"- {s.get('Role')}: ${s.get('Salary',0)/12*fringe:,.0f}/mo")
-            else:
-                st.write(f"Total Period Fixed Labor: ${audit['Fixed Labor']:,.0f}")
-            st.markdown("</div>", unsafe_allow_html=True)
+    a1, a2, a3 = st.columns(3)
+    with a1:
+        st.markdown("<div class='audit-card'><b>💰 Revenue Breakdown</b><br>", unsafe_allow_html=True)
+        st.write(f"97153: ${audit['R_97153']:,.0f} ({int(audit['H_97153']):,} hrs)")
+        st.write(f"97155: ${audit['R_97155']:,.0f} ({int(audit['H_97155']):,} hrs)")
+        st.write(f"97151: ${audit['R_97151']:,.0f} ({int(audit['H_97151']):,} hrs)")
+        st.markdown("</div>", unsafe_allow_html=True)
+    with a2:
+        st.markdown("<div class='audit-card'><b>💸 Direct Labor</b><br>", unsafe_allow_html=True)
+        st.write(f"RBT Cost: ${audit['C_RBT']:,.0f}")
+        st.write(f"BCBA Billable: ${audit['C_BCBA']:,.0f}")
+        st.markdown("</div>", unsafe_allow_html=True)
+    with a3:
+        st.markdown("<div class='audit-card'><b>🏛️ Fixed Personnel</b><br>", unsafe_allow_html=True)
+        if view_type == "Monthly":
+            m_val = int(drill_period.split(" ")[1])
+            staff = df[df['Month'] == m_val].iloc[0]['Staff_Snap']
+            for s in staff:
+                if s.get('Count', 0) > 0:
+                    st.write(f"- {s.get('Role')}: ${s.get('Salary',0)/12*fringe:,.0f}/mo")
+        else:
+            st.write(f"Total Fixed Labor: ${audit['Fixed Labor']:,.0f}")
+        st.markdown("</div>", unsafe_allow_html=True)
 
     # Excel Download
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Monthly_Detailed')
-        board_df.to_excel(writer, index=False, sheet_name='Executive_Summary')
-    st.download_button("📥 Download Board Financials", output.getvalue(), "ABA_Executive_Proforma.xlsx")
+        df.to_excel(writer, index=False, sheet_name='Monthly_Raw')
+        board_df.to_excel(writer, index=False, sheet_name='Summary')
+    st.download_button("📥 Download Final Board Package", output.getvalue(), "ABA_Final_Package.xlsx")
