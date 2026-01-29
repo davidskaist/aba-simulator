@@ -31,7 +31,7 @@ if 'manual_hires' not in st.session_state:
         {"Month": 13, "Role": "Clinic Program Director", "Salary": 85000, "Count": 1},
     ])
 
-# --- SIDEBAR: ALL DRIVERS RESTORED ---
+# --- SIDEBAR: DRIVERS ---
 with st.sidebar:
     st.header("🏠 In-Home Division")
     ih_start = st.number_input("In-Home Starting Cases", value=40)
@@ -54,4 +54,4 @@ with st.sidebar:
     fringe = (st.slider("Fringe Benefits %", 10, 35, 20) / 100) + 1
     
     st.header("⚙️ View Settings")
-    view_type = st.radio("Display Granularity:", ["Yearly", "Quarter
+    view_type =
