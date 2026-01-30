@@ -12,7 +12,6 @@ st.markdown("""
     [data-testid="stMetricValue"] { font-size: 18px; color: #1e3a8a; }
     .division-header { background-color: #1e3a8a; color: white; padding: 10px; border-radius: 5px; margin-bottom: 15px; }
     .audit-card { background-color: #f8fafc; padding: 20px; border-radius: 10px; border: 1px solid #e2e8f0; margin-bottom: 10px; }
-    .cpt-table { font-size: 14px; width: 100%; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -99,8 +98,11 @@ def run_model(hiring_data, ih_h_in, cl_h_in):
         ih_cogs = (h_ih_53 * pay_rbt * fringe) + (h_ih_55 * pay_bcba * fringe)
         ih_ebitda = ih_rev - ih_cogs - ih_fixed - (ih_rev * 0.05)
 
-        # 4. REVENUE MATH (CLINIC)
-        cl_rev, cl_cogs, cl_ebitda, h_cl_53, h_cl_55, r_cl_51 = 0, 0, 0, 0, 0, 0
+        # 4. REVENUE MATH (CLINIC) - PRE-DEFINED TO PREVENT ERRORS
+        cl_rev, cl_cogs, cl_ebitda = 0, 0, 0
+        h_cl_53, h_cl_55, h_cl_51 = 0, 0, 0
+        r_cl_53, r_cl_55, r_cl_51 = 0, 0, 0
+        
         if m >= 13:
             h_cl_53 = (cl_cases * cl_h_in * 4.33) * buffer_mult
             h_cl_55 = (cl_cases * 2 * 4.33) * buffer_mult
@@ -120,11 +122,12 @@ def run_model(hiring_data, ih_h_in, cl_h_in):
             "IH_R53": r_ih_53, "IH_R55": r_ih_55, "IH_R51": r_ih_51, "IH_Staff": ih_staff_list,
             "CL_Cases": cl_cases, "CL_Rev": cl_rev, "CL_EBITDA": cl_ebitda,
             "CL_H53": h_cl_53, "CL_H55": h_cl_55, "CL_H51": h_cl_51,
-            "CL_R53": r_cl_53 if m >= 13 else 0, "CL_R55": r_cl_55 if m >= 13 else 0, "CL_R51": r_cl_51 if m >= 13 else 0, "CL_Staff": cl_staff_list,
+            "CL_R53": r_cl_53, "CL_R55": r_cl_55, "CL_R51": r_cl_51, "CL_Staff": cl_staff_list,
             "Total_Rev": ih_rev + cl_rev, "Total_EBITDA": total_ebitda_pre - p_share, "P_Share": p_share
         })
     return pd.DataFrame(data)
 
+# Process Data
 df = run_model(st.session_state.manual_hires, ih_h, cl_h)
 
 # --- VIEW FORMATTING ---
@@ -148,7 +151,7 @@ def get_view(df_in, prefix, is_total=False):
     board['Margin %'] = (board['EBITDA'] / board['Revenue'] * 100).fillna(0)
     return board
 
-# --- TABS ---
+# --- DASHBOARD TABS ---
 t1, t2, t3, t4 = st.tabs(["🌎 Consolidated", "🏠 In-Home", "🏢 Clinic", "📋 Personnel Roadmap"])
 
 with t4:
@@ -161,13 +164,13 @@ with t4:
 
 def render_audit(df_view, prefix, is_total=False):
     st.markdown("---")
-    st.subheader(f"🔍 Divisional Audit Trail: {prefix}")
+    st.subheader(f"🔍 Audit Trail: {prefix}")
     drill = st.selectbox(f"Select Period:", df_view['Period'].tolist(), key=f"d_{prefix}")
     a = df_view[df_view['Period'] == drill].iloc[0]
     
     col1, col2 = st.columns([2, 1])
     with col1:
-        st.markdown("<div class='audit-card'><b>💰 Detailed Revenue Receipt (CPT Breakdown)</b>", unsafe_allow_html=True)
+        st.markdown("<div class='audit-card'><b>💰 CPT Revenue Breakdown</b>", unsafe_allow_html=True)
         if is_total:
             st.write(f"In-Home Revenue: ${a['IH_Rev']:,.0f}")
             st.write(f"Clinic Revenue: ${a['CL_Rev']:,.0f}")
@@ -178,43 +181,42 @@ def render_audit(df_view, prefix, is_total=False):
                 {"Code": "97155 (Super)", "Hours": a[f'{prefix}_H55'], "Units": a[f'{prefix}_H55']*4, "Revenue": a[f'{prefix}_R55']},
                 {"Code": "97151 (Assess)", "Hours": a[f'{prefix}_H51'], "Units": a[f'{prefix}_H51']*4, "Revenue": a[f'{prefix}_R51']},
             ]
-            st.table(pd.DataFrame(cpt_data).style.format({"Hours": "{:,.0f}", "Units": "{:,.0f}", "Revenue": "${:,.0f}"}))
+            st.table(pd.DataFrame(cpt_data).set_index('Code').style.format({"Hours": "{:,.0f}", "Units": "{:,.0f}", "Revenue": "${:,.0f}"}))
         st.markdown("</div>", unsafe_allow_html=True)
         
     with col2:
-        st.markdown("<div class='audit-card'><b>🏛️ Personnel Breakdown</b>", unsafe_allow_html=True)
+        st.markdown("<div class='audit-card'><b>🏛️ Personnel Expense</b>", unsafe_allow_html=True)
         if is_total:
-            st.write("View individual tabs for staff detail.")
+            st.write("Drill down into individual tabs for role list.")
         else:
-            # Re-collect staff for the specific period
-            if view_type == "Monthly":
-                m_list = [a['Month']]
-            elif view_type == "Quarterly":
-                m_list = df[(df['Year'] == a['Year']) & (df['Quarter'] == a['Quarter'])]['Month'].tolist()
+            if view_type == "Monthly": m_list = [a['Month']]
+            elif view_type == "Quarterly": m_list = df[(df['Year'] == a['Year']) & (df['Quarter'] == a['Quarter'])]['Month'].tolist()
+            else: m_list = df[df['Year'] == a['Year']]['Month'].tolist()
+            
+            p_staff = []
+            for m in m_list: p_staff.extend(df[df['Month'] == m].iloc[0][f'{prefix}_Staff'])
+            
+            if p_staff:
+                s_sum = pd.DataFrame(p_staff).groupby("Role")['Cost'].sum().reset_index()
+                for _, s in s_sum.iterrows(): st.write(f"- {s['Role']}: ${s['Cost']:,.0f}")
             else:
-                m_list = df[df['Year'] == a['Year']]['Month'].tolist()
-            
-            # Aggregate staff costs for the selected view
-            period_staff = []
-            for m in m_list:
-                period_staff.extend(df[df['Month'] == m].iloc[0][f'{prefix}_Staff'])
-            
-            staff_summary = pd.DataFrame(period_staff).groupby("Role")['Cost'].sum().reset_index()
-            for _, s in staff_summary.iterrows():
-                st.write(f"- {s['Role']}: ${s['Cost']:,.0f}")
+                st.write("No staff costs assigned to this division.")
         st.markdown("</div>", unsafe_allow_html=True)
 
 with t1:
     v_total = get_view(df, "", is_total=True)
+    st.markdown("<div class='division-header'><h3>Total Enterprise Summary</h3></div>", unsafe_allow_html=True)
     st.dataframe(v_total[['Period', 'Cases', 'Revenue', 'EBITDA', 'Margin %']].set_index('Period').T.style.format(precision=0, thousands=","), use_container_width=True)
     render_audit(v_total, "Enterprise", is_total=True)
 
 with t2:
     v_ih = get_view(df, "IH")
+    st.markdown("<div class='division-header'><h3>In-Home Division Only</h3></div>", unsafe_allow_html=True)
     st.dataframe(v_ih[['Period', 'Cases', 'Revenue', 'EBITDA', 'Margin %']].set_index('Period').T.style.format(precision=0, thousands=","), use_container_width=True)
     render_audit(v_ih, "IH")
 
 with t3:
     v_cl = get_view(df, "CL")
+    st.markdown("<div class='division-header'><h3>Clinic Division Only</h3></div>", unsafe_allow_html=True)
     st.dataframe(v_cl[['Period', 'Cases', 'Revenue', 'EBITDA', 'Margin %']].set_index('Period').T.style.format(precision=0, thousands=","), use_container_width=True)
     render_audit(v_cl, "CL")
