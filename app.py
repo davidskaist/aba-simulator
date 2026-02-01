@@ -4,7 +4,7 @@ import numpy as np
 from io import BytesIO
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="Strides ABA: Final Investor Suite", layout="wide")
+st.set_page_config(page_title="Strides ABA: Investment Suite", layout="wide")
 
 st.markdown("""
     <style>
@@ -76,8 +76,7 @@ def run_model(hiring_data, ih_h_in, cl_h_in):
         active_staff = clean_hires[clean_hires['Month'] <= m]
         cc_req = max(1, int(np.ceil(total_cases / 50)))
         ih_fixed, cl_fixed, ih_staff_list, cl_staff_list = 0, 0, [], []
-        fixed_hc = 0
-        new_bo_hires = 0
+        fixed_hc, new_bo_hires = 0, 0
         for _, row in active_staff.iterrows():
             cnt = cc_req if "Care Coordinator" in row['Role'] else row['Count']
             cost = (row['Salary'] * cnt) / 12 * fringe
@@ -90,155 +89,8 @@ def run_model(hiring_data, ih_h_in, cl_h_in):
                 ih_fixed += cost
                 ih_staff_list.append({"Role": row['Role'], "Cost": cost})
 
-        # 3. REVENUE MATH
+        # 3. REVENUE
         h_ih53 = (ih_cases * ih_h_in * 4.33) * buffer_mult
         h_ih55 = (ih_cases * 2 * 4.33) * buffer_mult
-        h_ih51 = ((new_ih + (ih_cases/6)) * 8)
-        rev_ih = (h_ih53 * 4 * r_97153) + (h_ih55 * 4 * r_97155) + (h_ih51 * 4 * r_97151)
-        cogs_ih = (h_ih53 * pay_rbt * fringe) + (h_ih55 * pay_bcba * fringe)
-        
-        h_cl53, h_cl55, h_cl51, rev_cl, cogs_cl = 0, 0, 0, 0, 0
-        if m >= 13:
-            h_cl53 = (cl_cases * cl_h_in * 4.33) * buffer_mult
-            h_cl55 = (cl_cases * 2 * 4.33) * buffer_mult
-            h_cl51 = (((20/24) + (cl_cases/6)) * 8)
-            rev_cl = (h_cl53 * 4 * r_97153) + (h_cl55 * 4 * r_97155) + (h_cl51 * 4 * r_97151)
-            cogs_cl = (h_cl53 * pay_rbt * fringe) + (h_cl55 * pay_bcba * fringe)
-
-        total_rev = rev_ih + rev_cl
-        
-        # 4. OPEX DETAIL
-        direct_hc = ((h_ih53 + h_cl53 + h_ih55 + h_cl55) / (25 * 4.33))
-        total_hc = fixed_hc + direct_hc
-        
-        # Line Items
-        mktg = 10000
-        indeed = 5000
-        emr = total_hc * 90
-        it_outlook = total_hc * 100
-        ai_note = np.ceil(total_cases / 30) * 1800
-        legal = 10000 / 12
-        billing = total_rev * 0.05
-        leadtrap = 800
-        ats = 400
-        hardware = new_bo_hires * 1500
-        acct = (150000/12*fringe) if (total_rev*12 >= 5000000) else (total_rev * 0.01)
-
-        total_op_ex = mktg + indeed + emr + it_outlook + ai_note + legal + billing + leadtrap + ats + hardware + acct
-
-        # Profit Share
-        eb_ih = rev_ih - cogs_ih - ih_fixed - (total_op_ex * mix_ih)
-        eb_cl = rev_cl - cogs_cl - cl_fixed - (total_op_ex * mix_cl) - (cl_rent if m >= 13 else 0)
-        p_share = ((eb_ih + eb_cl) * 0.05) if (m >= 13 and (eb_ih + eb_cl) > 0) else 0
-        ebitda = (eb_ih + eb_cl) - p_share
-        cum_ebitda += ebitda
-
-        data.append({
-            "Month": m, "Year": int(np.ceil(m/12)), "Quarter": int(np.ceil(((m-1) % 12 + 1)/3)),
-            "Total_Rev": total_rev, "Total_EB": ebitda, "Cum_EB": cum_ebitda,
-            "IH_Cases": ih_cases, "IH_Rev": rev_ih, "IH_EB": eb_ih, "IH_H53": h_ih53, "IH_H55": h_ih55, "IH_H51": h_ih51, "IH_Staff": ih_staff_list,
-            "CL_Cases": cl_cases, "CL_Rev": rev_cl, "CL_EB": eb_cl, "CL_H53": h_cl53, "CL_H55": h_cl55, "CL_H51": h_cl51, "CL_Staff": cl_staff_list,
-            "Op_Mktg": mktg, "Op_Indeed": indeed, "Op_EMR": emr, "Op_IT": it_outlook, "Op_AI": ai_note, "Op_Legal": legal,
-            "Op_Billing": billing, "Op_Leadtrap": leadtrap, "Op_ATS": ats, "Op_Hardware": hardware, "Op_Acct": acct,
-            "P_Share": p_share, "Headcount": total_hc, "Rent": (cl_rent if m >= 13 else 0)
-        })
-    return pd.DataFrame(data)
-
-df = run_model(st.session_state.manual_hires, ih_h, cl_h)
-
-# --- RESTORED MILESTONES HEADER ---
-m1, m2, m3, m4 = st.columns(4)
-def find_m(target):
-    match = df[df['Cum_EB'] >= target]
-    return f"Month {match.iloc[0]['Month']}" if not match.empty else "N/A"
-
-m1.metric("🎯 $500k Profit Milestone", find_m(500000))
-m2.metric("🚀 $1M Profit Milestone", find_m(1000000))
-m3.metric("🏛️ Year 5 Annual EBITDA", f"${df.iloc[-12:]['Total_EB'].sum():,.0f}")
-m4.metric("📊 Year 5 Billable Hours", f"{int(df.iloc[-12:][['IH_H53', 'CL_H53', 'IH_H55', 'CL_H55']].sum().sum()):,} hrs")
-
-# --- VIEW LOGIC ---
-def get_view(prefix, is_total=False):
-    g_map = {"Monthly": ["Month"], "Quarterly": ["Year", "Quarter"], "Yearly": ["Year"]}
-    aggs = {
-        'Total_Rev':'sum', 'Total_EB':'sum', 'IH_Cases':'max', 'CL_Cases':'max', 'IH_Rev':'sum', 'IH_EB':'sum', 'CL_Rev':'sum', 'CL_EB':'sum',
-        'IH_H53':'sum', 'IH_H55':'sum', 'IH_H51':'sum', 'CL_H53':'sum', 'CL_H55':'sum', 'CL_H51':'sum', 'Headcount':'max',
-        'Op_Mktg':'sum', 'Op_Indeed':'sum', 'Op_EMR':'sum', 'Op_IT':'sum', 'Op_AI':'sum', 'Op_Legal':'sum', 'Op_Billing':'sum', 'Op_Leadtrap':'sum', 'Op_ATS':'sum', 'Op_Hardware':'sum', 'Op_Acct':'sum', 'Rent':'sum'
-    }
-    board = df.groupby(g_map[view_type]).agg(aggs).reset_index()
-    if view_type == "Monthly": board['Period'] = board['Month'].apply(lambda x: f"Month {x}")
-    elif view_type == "Quarterly": board['Period'] = board.apply(lambda x: f"Y{int(x['Year'])} Q{int(x['Quarter'])}", axis=1)
-    else: board['Period'] = board['Year'].apply(lambda x: f"Year {x}")
-    board['Disp_Cases'] = board['IH_Cases'] + board['CL_Cases'] if is_total else board[f'{prefix}_Cases']
-    board['Disp_Rev'] = board['Total_Rev'] if is_total else board[f'{prefix}_Rev']
-    board['Disp_EB'] = board['Total_EB'] if is_total else board[f'{prefix}_EB']
-    board['Margin %'] = (board['Disp_EB'] / board['Disp_Rev'] * 100).fillna(0)
-    return board
-
-# --- TABS ---
-t1, t2, t3, t4 = st.tabs(["🌎 Consolidated", "🏠 In-Home", "🏢 Clinic", "📋 Personnel Roadmap"])
-
-with t4:
-    st.subheader("Hiring Roadmap Manager")
-    with st.form("h_shield"):
-        edited = st.data_editor(st.session_state.manual_hires, num_rows="dynamic", use_container_width=True)
-        if st.form_submit_button("🚀 Sync Roadmap"):
-            st.session_state.manual_hires = edited
-            st.rerun()
-
-def render_audit(view_df, prefix, is_total=False):
-    st.markdown("---")
-    drill = st.selectbox(f"Select Period to Audit ({prefix}):", view_df['Period'].tolist(), key=f"d_{prefix}")
-    a = view_df[view_df['Period'] == drill].iloc[0]
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        st.markdown("<div class='audit-card'><b>💰 Monthly Overhead / OpEx Detail</b>", unsafe_allow_html=True)
-        overhead = pd.DataFrame([
-            {"Item": "Marketing ($10k/mo)", "Cost": a['Op_Mktg']},
-            {"Item": "Indeed Recruiting ($5k/mo)", "Cost": a['Op_Indeed']},
-            {"Item": "EMR Fees ($90/hc)", "Cost": a['Op_EMR']},
-            {"Item": "IT & Outlook ($100/hc)", "Cost": a['Op_IT']},
-            {"Item": "AI Notechecker", "Cost": a['Op_AI']},
-            {"Item": "Medical Billing (5%)", "Cost": a['Op_Billing']},
-            {"Item": "Accounting/CFO", "Cost": a['Op_Acct']},
-            {"Item": "Leadtrap AI Chatbot", "Cost": a['Op_Leadtrap']},
-            {"Item": "ATS (Apploi)", "Cost": a['Op_ATS']},
-            {"Item": "Legal Maintenance", "Cost": a['Op_Legal']},
-            {"Item": "Hardware (Back Office)", "Cost": a['Op_Hardware']},
-            {"Item": "Clinic Rent", "Cost": a['Rent']}
-        ])
-        st.table(overhead.set_index('Item').style.format(precision=0, thousands=","))
-        st.markdown("</div>", unsafe_allow_html=True)
-    with c2:
-        st.markdown("<div class='audit-card'><b>🏛️ Personnel & Revenue Mix</b>", unsafe_allow_html=True)
-        st.write(f"**Division:** {prefix}")
-        st.write(f"**Cases:** {int(a['Disp_Cases'])}")
-        st.write(f"**Revenue:** ${a['Disp_Rev']:,.0f}")
-        if not is_total:
-            m_list = [a['Month']] if view_type == "Monthly" else df[df['Year'] == a['Year']]['Month'].tolist()
-            staff = []
-            for m in m_list: staff.extend(df[df['Month'] == m].iloc[0][f'{prefix}_Staff'])
-            if staff:
-                s_sum = pd.DataFrame(staff).groupby("Role")['Cost'].sum().reset_index()
-                for _, row in s_sum.iterrows(): st.write(f"- {row['Role']}: ${row['Cost']:,.0f}")
-        st.write(f"**EBITDA:** ${a['Disp_EB']:,.0f}")
-        st.write(f"**Margin:** {a['Margin %']:.1f}%")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-with t1:
-    v = get_view("", is_total=True)
-    st.markdown("<div class='division-header'><h3>Total Enterprise Summary</h3></div>", unsafe_allow_html=True)
-    st.dataframe(v[['Period', 'Disp_Cases', 'Disp_Rev', 'Disp_EB', 'Margin %']].set_index('Period').T.style.format(precision=0, thousands=","), use_container_width=True)
-    render_audit(v, "Enterprise", is_total=True)
-
-with t2:
-    v_ih = get_view("IH")
-    st.markdown("<div class='division-header'><h3>In-Home Division Financials</h3></div>", unsafe_allow_html=True)
-    st.dataframe(v_ih[['Period', 'Disp_Cases', 'Disp_Rev', 'Disp_EB', 'Margin %']].set_index('Period').T.style.format(precision=0, thousands=","), use_container_width=True)
-    render_audit(v_ih, "IH")
-
-with t3:
-    v_cl = get_view("CL")
-    st.markdown("<div class='division-header'><h3>Clinic Division Financials (Starts Y2)</h3></div>", unsafe_allow_html=True)
-    st.dataframe(v_cl[['Period', 'Disp_Cases', 'Disp_Rev', 'Disp_EB', 'Margin %']].set_index('Period').T.style.format(precision=0, thousands=","), use_container_width=True)
-    render_audit(v_cl, "CL")
+        h_ih51 = (((ih_growth if m > 1 else 0) + (ih_cases/6)) * 8)
+        rev_ih = (h
