@@ -58,39 +58,3 @@ with st.sidebar:
 def run_model(hiring_data, ih_h_in, cl_h_in):
     months = 60
     data = []
-    cum_ebitda = 0
-    clean_hires = hiring_data.copy()
-    for col in ['Count', 'Salary', 'Month']:
-        clean_hires[col] = pd.to_numeric(clean_hires[col], errors='coerce').fillna(0)
-
-    for m in range(1, months + 1):
-        # 1. VOLUME
-        new_ih = ih_growth if m > 1 else 0
-        ih_cases = ih_start + (ih_growth * (m-1))
-        cl_cases = 0 if m < 13 else (20 / 24) * min(m - 12, 24)
-        total_cases = ih_cases + cl_cases
-        mix_ih = ih_cases / total_cases if total_cases > 0 else 1
-        mix_cl = 1 - mix_ih
-
-        # 2. PERSONNEL
-        active_staff = clean_hires[clean_hires['Month'] <= m]
-        cc_req = max(1, int(np.ceil(total_cases / 50)))
-        ih_fixed, cl_fixed, ih_staff_list, cl_staff_list = 0, 0, [], []
-        fixed_hc, new_bo_hires = 0, 0
-        for _, row in active_staff.iterrows():
-            cnt = cc_req if "Care Coordinator" in row['Role'] else row['Count']
-            cost = (row['Salary'] * cnt) / 12 * fringe
-            fixed_hc += cnt
-            if row['Month'] == m: new_bo_hires += cnt
-            if "Clinic" in row['Role']: 
-                cl_fixed += cost
-                cl_staff_list.append({"Role": row['Role'], "Cost": cost})
-            else: 
-                ih_fixed += cost
-                ih_staff_list.append({"Role": row['Role'], "Cost": cost})
-
-        # 3. REVENUE
-        h_ih53 = (ih_cases * ih_h_in * 4.33) * buffer_mult
-        h_ih55 = (ih_cases * 2 * 4.33) * buffer_mult
-        h_ih51 = (((ih_growth if m > 1 else 0) + (ih_cases/6)) * 8)
-        rev_ih = (h
