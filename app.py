@@ -4,7 +4,7 @@ import numpy as np
 from io import BytesIO
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="Strides ABA: Investment Suite", layout="wide")
+st.set_page_config(page_title="Strides ABA: Final Investment Suite", layout="wide")
 
 st.markdown("""
     <style>
@@ -17,7 +17,7 @@ st.markdown("""
 
 st.title("📊 Strides ABA: Multi-Divisional Investment Model")
 
-# --- PERSONNEL DATA ---
+# --- INITIALIZE PERSISTENT DATA ---
 if 'manual_hires' not in st.session_state:
     st.session_state.manual_hires = pd.DataFrame([
         {"Month": 1, "Role": "Clinical Director (General)", "Salary": 140000, "Count": 1},
@@ -31,6 +31,22 @@ if 'manual_hires' not in st.session_state:
         {"Month": 13, "Role": "Clinic Clinical Director", "Salary": 120000, "Count": 1},
         {"Month": 13, "Role": "Clinic Program Director", "Salary": 85000, "Count": 1},
     ])
+
+if 'overhead_budget' not in st.session_state:
+    st.session_state.overhead_budget = {
+        "Marketing_Monthly": 10000.0,
+        "Indeed_Monthly": 5000.0,
+        "EMR_Per_HC": 90.0,
+        "IT_Per_HC": 100.0,
+        "AI_Notes_Per_30_Cases": 1800.0,
+        "Billing_Pct_Revenue": 0.05,
+        "Leadtrap_Monthly": 800.0,
+        "ATS_Apploi_Monthly": 400.0,
+        "Legal_Annual": 10000.0,
+        "Hardware_Per_New_BO": 1500.0,
+        "CFO_Threshold_Rev": 5000000.0,
+        "CFO_Salary": 150000.0
+    }
 
 # --- SIDEBAR: DRIVERS ---
 with st.sidebar:
@@ -55,7 +71,7 @@ with st.sidebar:
     view_type = st.radio("Display Granularity:", ["Yearly", "Quarterly", "Monthly"])
 
 # --- CORE CALCULATOR ---
-def run_model(hiring_data, ih_h_in, cl_h_in):
+def run_model(hiring_data, ov_budget, ih_h_in, cl_h_in):
     months = 60
     data = []
     cum_ebitda = 0
@@ -93,28 +109,32 @@ def run_model(hiring_data, ih_h_in, cl_h_in):
         h_ih53 = (ih_cases * ih_h_in * 4.33) * buffer_mult
         h_ih55 = (ih_cases * 2 * 4.33) * buffer_mult
         h_ih51 = (((ih_growth if m > 1 else 0) + (ih_cases/6)) * 8)
-        r_ih_53, r_ih_55, r_ih_51 = h_ih53 * 4 * r_97153, h_ih55 * 4 * r_97155, h_ih51 * 4 * r_97151
-        rev_ih = r_ih_53 + r_ih_55 + r_ih_51
+        rev_ih = (h_ih53 * 4 * r_97153) + (h_ih55 * 4 * r_97155) + (h_ih51 * 4 * r_97151)
         cogs_ih = (h_ih53 * pay_rbt * fringe) + (h_ih55 * pay_bcba * fringe)
         
         h_cl53, h_cl55, h_cl51, rev_cl, cogs_cl = 0, 0, 0, 0, 0
-        r_cl_53, r_cl_55, r_cl_51 = 0, 0, 0
         if m >= 13:
             h_cl53 = (cl_cases * cl_h_in * 4.33) * buffer_mult
             h_cl55 = (cl_cases * 2 * 4.33) * buffer_mult
             h_cl51 = (((20/24) + (cl_cases/6)) * 8)
-            r_cl_53, r_cl_55, r_cl_51 = h_cl53 * 4 * r_97153, h_cl55 * 4 * r_97155, h_cl51 * 4 * r_97151
-            rev_cl = r_cl_53 + r_cl_55 + r_cl_51
+            rev_cl = (h_cl53 * 4 * r_97153) + (h_cl55 * 4 * r_97155) + (h_cl51 * 4 * r_97151)
             cogs_cl = (h_cl53 * pay_rbt * fringe) + (h_cl55 * pay_bcba * fringe)
 
         total_rev = rev_ih + rev_cl
         
-        # 4. OPEX
+        # 4. OPEX (Using Editable Budget)
         total_hc = fixed_hc + ((h_ih53 + h_cl53 + h_ih55 + h_cl55) / (25 * 4.33))
-        mktg, indeed, emr, it, ai = 10000, 5000, total_hc*90, total_hc*100, np.ceil(total_cases/30)*1800
-        billing, leadtrap, ats, legal = total_rev*0.05, 800, 400, 10000/12
-        hw = new_bo_hires * 1500
-        acct = (150000/12*fringe) if (total_rev*12 >= 5000000) else (total_rev * 0.01)
+        mktg = ov_budget['Marketing_Monthly']
+        indeed = ov_budget['Indeed_Monthly']
+        emr = total_hc * ov_budget['EMR_Per_HC']
+        it = total_hc * ov_budget['IT_Per_HC']
+        ai = np.ceil(total_cases/30) * ov_budget['AI_Notes_Per_30_Cases']
+        billing = total_rev * ov_budget['Billing_Pct_Revenue']
+        leadtrap = ov_budget['Leadtrap_Monthly']
+        ats = ov_budget['ATS_Apploi_Monthly']
+        legal = ov_budget['Legal_Annual'] / 12
+        hw = new_bo_hires * ov_budget['Hardware_Per_New_BO']
+        acct = (ov_budget['CFO_Salary']/12*fringe) if (total_rev*12 >= ov_budget['CFO_Threshold_Rev']) else (total_rev * 0.01)
         total_op_ex = mktg+indeed+emr+it+ai+legal+billing+leadtrap+ats+hw+acct
 
         # 5. PROFIT
@@ -133,7 +153,7 @@ def run_model(hiring_data, ih_h_in, cl_h_in):
         })
     return pd.DataFrame(data)
 
-df = run_model(st.session_state.manual_hires, ih_h, cl_h)
+df = run_model(st.session_state.manual_hires, st.session_state.overhead_budget, ih_h, cl_h)
 
 # --- MILESTONES HEADER ---
 m1, m2, m3, m4 = st.columns(4)
@@ -145,16 +165,12 @@ m1.metric("🎯 $500k Profit Milestone", find_m(500000))
 m2.metric("🚀 $1M Profit Milestone", find_m(1000000))
 y5_ebitda = df.iloc[-12:]['Total_EB'].sum()
 m3.metric("🏛️ Year 5 Annual EBITDA", f"${y5_ebitda:,.0f}")
-m4.metric("📊 Year 5 Billable Hours", f"{int(df.iloc[-12:][['IH_H53', 'CL_H53', 'IH_H55', 'CL_H55']].sum().sum()):,} hrs")
+m4.metric("📊 Total Headcount", f"{int(df['Headcount'].max())} people")
 
 # --- VIEW LOGIC ---
 def get_view(prefix, is_total=False):
     g_map = {"Monthly": ["Month"], "Quarterly": ["Year", "Quarter"], "Yearly": ["Year"]}
-    aggs = {
-        'Total_Rev':'sum', 'Total_EB':'sum', 'IH_Cases':'max', 'CL_Cases':'max', 'IH_Rev':'sum', 'IH_EB':'sum', 'CL_Rev':'sum', 'CL_EB':'sum',
-        'IH_H53':'sum', 'IH_H55':'sum', 'IH_H51':'sum', 'CL_H53':'sum', 'CL_H55':'sum', 'CL_H51':'sum', 'Headcount':'max',
-        'Op_Mktg':'sum', 'Op_Indeed':'sum', 'Op_EMR':'sum', 'Op_IT':'sum', 'Op_AI':'sum', 'Op_Billing':'sum', 'Op_Acct':'sum', 'Op_Leadtrap':'sum', 'Op_ATS':'sum', 'Op_Legal':'sum', 'Op_Hardware':'sum', 'Rent':'sum'
-    }
+    aggs = {'Total_Rev':'sum', 'Total_EB':'sum', 'IH_Cases':'max', 'CL_Cases':'max', 'IH_Rev':'sum', 'IH_EB':'sum', 'CL_Rev':'sum', 'CL_EB':'sum', 'IH_H53':'sum', 'IH_H55':'sum', 'IH_H51':'sum', 'CL_H53':'sum', 'CL_H55':'sum', 'CL_H51':'sum', 'Headcount':'max', 'Op_Mktg':'sum', 'Op_Indeed':'sum', 'Op_EMR':'sum', 'Op_IT':'sum', 'Op_AI':'sum', 'Op_Billing':'sum', 'Op_Acct':'sum', 'Op_Leadtrap':'sum', 'Op_ATS':'sum', 'Op_Legal':'sum', 'Op_Hardware':'sum', 'Rent':'sum'}
     board = df.groupby(g_map[view_type]).agg(aggs).reset_index()
     if view_type == "Monthly": board['Period'] = board['Month'].apply(lambda x: f"Month {x}")
     elif view_type == "Quarterly": board['Period'] = board.apply(lambda x: f"Y{int(x['Year'])} Q{int(x['Quarter'])}", axis=1)
@@ -164,23 +180,40 @@ def get_view(prefix, is_total=False):
     return board
 
 # --- TABS ---
-t1, t2, t3, t4, t5 = st.tabs(["🌎 Consolidated", "🏠 In-Home", "🏢 Clinic", "📋 Personnel", "📝 Investor Docs"])
+t1, t2, t3, t4, t5, t6 = st.tabs(["🌎 Consolidated", "🏠 In-Home", "🏢 Clinic", "📋 Personnel", "⚙️ Expenses", "📝 Investor Docs"])
 
-with t5:
+with t6:
     st.subheader("Investor Package Generation")
     
     st.markdown("### 📥 Financial Export")
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        get_view("", is_total=True).to_excel(writer, sheet_name='Consolidated P&L', index=False)
-        get_view("IH").to_excel(writer, sheet_name='In-Home Division', index=False)
-        get_view("CL").to_excel(writer, sheet_name='Clinic Division', index=False)
+        # Simplified clean table for export
+        export_v = get_view("", is_total=True)[['Period', 'Disp_Cases', 'Disp_Rev', 'Disp_EB', 'Margin %']]
+        export_v.columns = ['Period', 'Active Cases', 'Total Revenue', 'Total EBITDA', 'Margin %']
+        export_v.to_excel(writer, sheet_name='5-Year Executive P&L', index=False)
         st.session_state.manual_hires.to_excel(writer, sheet_name='Hiring Roadmap', index=False)
-    st.download_button(label="Download Full 5-Year Excel Model", data=output.getvalue(), file_name="Strides_ABA_Financial_ProForma.xlsx", mime="application/vnd.ms-excel")
+    st.download_button(label="Download Investor Summary Table (Excel)", data=output.getvalue(), file_name="Strides_ABA_Executive_Summary.xlsx", mime="application/vnd.ms-excel")
 
     st.markdown("### 📝 Business Plan Draft")
-    plan_text = f"EXECUTIVE SUMMARY: STRIDES ABA\n- Cases: {ih_start} (Acquired)\n- $500k Milestone: {find_m(500000)}\n- $1M Milestone: {find_m(1000000)}\n- Year 5 Annual EBITDA: ${y5_ebitda:,.0f}"
+    plan_text = f"EXECUTIVE SUMMARY: STRIDES ABA\n- Acquired Cases: {ih_start}\n- $500k Milestone: {find_m(500000)}\n- $1M Milestone: {find_m(1000000)}\n- Year 5 Exit EBITDA: ${y5_ebitda:,.0f}"
     st.text_area("Copy into Word:", value=plan_text, height=200)
+
+with t5:
+    st.subheader("Overhead & Operational Expense Manager")
+    st.info("Edit your non-payroll monthly expenses below.")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.session_state.overhead_budget['Marketing_Monthly'] = st.number_input("Marketing Spend ($/mo)", value=st.session_state.overhead_budget['Marketing_Monthly'])
+        st.session_state.overhead_budget['Indeed_Monthly'] = st.number_input("Indeed Ads ($/mo)", value=st.session_state.overhead_budget['Indeed_Monthly'])
+        st.session_state.overhead_budget['EMR_Per_HC'] = st.number_input("EMR Cost ($/staff member)", value=st.session_state.overhead_budget['EMR_Per_HC'])
+        st.session_state.overhead_budget['IT_Per_HC'] = st.number_input("IT & Email ($/staff member)", value=st.session_state.overhead_budget['IT_Per_HC'])
+    with col_b:
+        st.session_state.overhead_budget['AI_Notes_Per_30_Cases'] = st.number_input("AI Notechecker ($/30 cases)", value=st.session_state.overhead_budget['AI_Notes_Per_30_Cases'])
+        st.session_state.overhead_budget['Billing_Pct_Revenue'] = st.slider("Billing Fee (% Revenue)", 0.0, 0.10, 0.05, 0.01)
+        st.session_state.overhead_budget['CFO_Salary'] = st.number_input("CFO Salary ($/yr)", value=st.session_state.overhead_budget['CFO_Salary'])
+    if st.button("🚀 Apply Expense Changes"):
+        st.rerun()
 
 with t4:
     st.subheader("Hiring Roadmap Manager")
@@ -197,7 +230,7 @@ def render_audit(view_df, prefix, is_total=False):
     c1, c2 = st.columns([1, 1])
     with c1:
         st.markdown("<div class='audit-card'><b>💰 Overhead Audit</b>", unsafe_allow_html=True)
-        overhead = pd.DataFrame([{"Item": "Marketing/Ads", "Cost": a['Op_Mktg']+a['Op_Indeed']}, {"Item": "EMR/IT/AI", "Cost": a['Op_EMR']+a['Op_IT']+a['Op_AI']}, {"Item": "Billing/Acct", "Cost": a['Op_Billing']+a['Op_Acct']}, {"Item": "Rent", "Cost": a['Rent']}])
+        overhead = pd.DataFrame([{"Item": "Marketing/Indeed", "Cost": a['Op_Mktg']+a['Op_Indeed']}, {"Item": "Tech Stack (EMR/IT/AI)", "Cost": a['Op_EMR']+a['Op_IT']+a['Op_AI']}, {"Item": "Finance (Billing/Acct)", "Cost": a['Op_Billing']+a['Op_Acct']}, {"Item": "Rent", "Cost": a['Rent']}])
         st.table(overhead.set_index('Item').style.format(precision=0, thousands=","))
         st.markdown("</div>", unsafe_allow_html=True)
     with c2:
@@ -214,6 +247,7 @@ def render_audit(view_df, prefix, is_total=False):
 
 with t1:
     v = get_view("", is_total=True)
+    st.markdown("<div class='division-header'><h3>Total Enterprise Summary</h3></div>", unsafe_allow_html=True)
     st.dataframe(v[['Period', 'Disp_Cases', 'Disp_Rev', 'Disp_EB', 'Margin %']].set_index('Period').T.style.format(precision=0, thousands=","), use_container_width=True)
     render_audit(v, "Enterprise", is_total=True)
 
